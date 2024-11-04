@@ -35,8 +35,6 @@ The "target" field refers to the presence of heart disease in the patient. It is
 
 """
 
-# new comment
-
 # --- Use pandas for statistical analysis --- 
 # Load CSV file into DataFrame
 HeartDisease_fn = 'heart.csv'  # Replace with your file path
