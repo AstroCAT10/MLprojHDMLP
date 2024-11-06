@@ -6,6 +6,13 @@ import csv
 from sklearn.preprocessing import StandardScaler  
 from sklearn.neural_network import MLPClassifier # test/comparison/validation w/ scikit-learn's MLP implementation
 
+#outlier removal --
+from sklearn.ensemble import IsolationForest
+from scipy.stats import zscore
+
+# -----------------
+
+
 # I will implement kernelized multilayered perceptron (KMLP)
 # I will test the performance of KMLP against:
 # - Logistic Regression (LR)
@@ -39,31 +46,79 @@ The "target" field refers to the presence of heart disease in the patient. It is
 """
 
 class MLP():
-    def __init__(self, HeartDisease_fn):
+    def __init__(self, HeartDisease_fn, remove_outliers=True):
         self.HeartDisease_fn = HeartDisease_fn
+        self.remove_outliers = remove_outliers
 
-        #data = extract_features(load_adult_train_data(fn))
+    def getTrainTestData(self):
+        # load dataset
 
-        self.train_data, self.train_labs = self.load_HD_train_data()
-        self.test_data, self.test_labs = self.load_HD_test_data()
+        HD_data, HD_labs = self.load_HD_data()
 
-        self.N_features = self.train_data.shape[1]
-        self.N_examples = self.train_data.shape[0]
+        self.N_features = HD_data.shape[1]
+        self.N_examples = HD_data.shape[0]
+
+        # Get feature names
+        df = pd.read_csv(self.HeartDisease_fn)
+        self.feature_names = list(df.columns[0:self.N_features])
+        print(f'Feature names are: {self.feature_names}')
+
+        if self.remove_outliers:
+            # remove outliers from dataset
+            #self.dataStats(self.feature_names, HD_data)
+            HD_data = self.rmOutliers(HD_data, method='IForest')
+            #self.dataStats(self.feature_names, HD_data)
+            
+            self.N_examples = HD_data.shape[0]
+
         print(f'Data has {self.N_features} features and {self.N_examples} examples.')
+
+        # extract training and test data from dataset
+        self.train_data, self.train_labs = self.load_HD_train_data((HD_data,HD_labs))
+        self.test_data, self.test_labs = self.load_HD_test_data((HD_data,HD_labs))
 
         self.train_labs[self.train_labs == 0] = -1
         # -1 = No heart disease
         # 1 = heart disease
 
-        df = pd.read_csv(self.HeartDisease_fn)
-        self.feature_names = list(df.columns[0:self.N_features])
-        print(f'Feature names are: {self.feature_names}')
-
-        self.dataStats2(self.feature_names, self.train_data)
-
+        #self.dataStats(self.feature_names, self.train_data)
         self.preprocessData()
+        #self.dataStats(self.feature_names, self.train_data)
 
-        self.dataStats2(self.feature_names, self.train_data)
+
+    def rmOutliers(self, data, method='IForest'):        
+        if method == 'IForest':
+            # Initialize the Isolation Forest model
+            iso_forest = IsolationForest(random_state=42)  # 5% contamination threshold
+            outliers = iso_forest.fit_predict(data)
+
+            # Keep only the inliers
+            data_no_outliers = data[outliers == 1]
+
+        elif method == 'z-score':
+            # Calculate the Z-scores for each feature
+            z_scores = np.abs(zscore(data))
+
+            # Define a threshold for Z-scores; common choice is 3 (for ~99.7% confidence level)
+            threshold = 2
+            data_no_outliers = data[(z_scores < threshold).all(axis=1)]
+
+        elif method == 'IQR':
+            threshold = 0.5
+            data_no_outliers = data.copy()
+            for i in range(data.shape[1]):  # Iterate over each feature
+                Q1 = np.percentile(data[:, i], 25)
+                Q3 = np.percentile(data[:, i], 75)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - threshold * IQR
+                upper_bound = Q3 + threshold * IQR
+                data_no_outliers = data[(data[:, i] >= lower_bound) & (data[:, i] <= upper_bound)]
+        
+        else:
+            print('Error using MLP.rmOutliers: method must be either "IForest", "z-score", or "IQR"')
+            data_no_outliers = []
+
+        return data_no_outliers
 
 
     def preprocessData(self):
@@ -76,6 +131,7 @@ class MLP():
         # apply same transformation to test data
         #self.test_data = scaler.transform(self.test_data)  
 
+        """
         print("original data stats:")
         print(scaler.mean_)
         print(scaler.var_)
@@ -90,6 +146,7 @@ class MLP():
         #print(self.train_data[0])
         #print(len(self.train_data[0]))
         #print(self.train_labs)
+        """
 
 
     # --- Use dictionary for ML algorithm ---
@@ -106,70 +163,27 @@ class MLP():
             labels = np.array(labels)
             return features, labels
 
-    # train and test data are subsets of the entire heart disease dataset
-
     def load_HD_data(self):
         return self.load_data()
 
-    def load_HD_train_data(self):
-        return self.load_HD_data()
+    # train and test data are subsets of the entire heart disease dataset
 
-    def load_HD_test_data(self):
-        return self.load_HD_data()
-    
+    def load_HD_train_data(self, data):
+        train_data = data
+        return train_data
 
-    # --- Use pandas for statistical analysis --- 
-    def dataStats(self):
-        # Load CSV file into DataFrame
-
-        df = pd.read_csv(self.HeartDisease_fn)
-
-        N_features = len(df.columns) - 1
-
-        print(df.columns[0:])
-
-        # Plot histograms for the first 6 columns
-        fig1, axes1 = plt.subplots(2, 3, figsize=(15, 8))
-        for i, col in enumerate(df.columns[:6]):
-            row, col_pos = divmod(i, 3)
-            df[col].hist(ax=axes1[row, col_pos], bins=30)
-            axes1[row, col_pos].set_title(f'Histogram of {col}')
-
-        plt.tight_layout()
-
-        fig2, axes2 = plt.subplots(2, 3, figsize=(15, 8))
-        for i, col in enumerate(df.columns[:6]):
-            row, col_pos = divmod(i, 3)
-            df[col].plot.box(ax=axes2[row, col_pos])
-            axes2[row, col_pos].set_title(f'Boxplot of {col}')
-
-        plt.tight_layout()
-
-        # Plot histograms for the last 7 columns
-        fig3, axes3 = plt.subplots(2, 3, figsize=(15, 8))
-        for i, col in enumerate(df.columns[7:13]):
-            row, col_pos = divmod(i, 3)
-            df[col].hist(ax=axes3[row, col_pos], bins=30)
-            axes3[row, col_pos].set_title(col)
-
-        plt.tight_layout()
-
-        fig4, axes4 = plt.subplots(2, 3, figsize=(15, 8))
-        for i, col in enumerate(df.columns[7:13]):
-            row, col_pos = divmod(i, 3)
-            df[col].plot.box(ax=axes4[row, col_pos])
-            axes4[row, col_pos].set_title(f'Boxplot of {col}')
-
-        plt.tight_layout()
-
-        plt.show()
+    def load_HD_test_data(self, data):
+        test_data = data
+        return test_data
 
 
-    def dataStats2(self, data_headers, data):
+    def dataStats(self, data_headers, data):
         N_bins = int(np.sqrt(self.N_examples))
 
         data_1st_half = np.arange(0, self.N_features//2)
         data_2nd_half = np.arange(self.N_features//2, self.N_features)
+
+        # --- histograms ---
 
         # Set up the subplot grid
         fig, axes = plt.subplots(nrows=2, ncols=7, figsize=(15, 8))
@@ -191,12 +205,64 @@ class MLP():
         plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust layout to make space for the title
         plt.show()
 
+        # --- box plots ---
+
+        # Set up the subplot grid
+        fig, axes = plt.subplots(nrows=2, ncols=7, figsize=(15, 8))
+        fig.suptitle('Histograms of Each Feature')
+
+        # Flatten the axes array for easier indexing
+        axes = axes.flatten()
+
+        # Plot a histogram for each feature
+        for i in range(self.N_features):
+            axes[i].boxplot(data[:, i])
+            axes[i].set_title(f'Box plot of {self.feature_names[i]}')
+            axes[i].set_xlabel('Value')
+            axes[i].set_ylabel('Frequency')
+
+        # Hide the last subplot (14th subplot) as we only have 13 features
+        axes[-1].axis('off')
+
+        plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust layout to make space for the title
+        plt.show()
+
+
+    def train(self):
+        theta = 0
+
+        #self.train_data
+
+        return theta
+
+
+    def predict(self, theta):
+        #self.test_data
+
+        preds = []
+
+        self.test_preds = preds
+
+    
+    def evaluate(self, labs, preds):
+        pass
+
+
 
 if __name__ == '__main__':
     HeartDisease_fn = 'heart.csv'  # Replace with your file path
 
-    mlp = MLP(HeartDisease_fn)
+    mlp = MLP(HeartDisease_fn, remove_outliers=True)
 
-    #mlp.dataStats()
+    mlp.getTrainTestData()
+
+    mlp.dataStats(mlp.feature_names, mlp.train_data)
+    #mlp.dataStats(mlp.feature_names, mlp.test_data)
+
+    #theta = mlp.train()
+
+    #mlp.predict(theta)
+
+    #mlp.evaluate(mlp.test_labs, mlp.test_pred)
 
     
