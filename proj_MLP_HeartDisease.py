@@ -1,11 +1,16 @@
-import os
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-import csv
+
 from sklearn.preprocessing import StandardScaler  
 from sklearn.neural_network import MLPClassifier # test/comparison/validation w/ scikit-learn's MLP implementation
-import random
+
+# other MLAs to test against
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import GaussianNB
+from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
 
 #outlier removal --
 from sklearn.ensemble import IsolationForest
@@ -14,10 +19,10 @@ from scipy.stats import zscore
 # -----------------
 
 
-# I will implement kernelized multilayered perceptron (KMLP)
-# I will test the performance of KMLP against:
+# I will implement multilayered perceptron (MLP)
+# I will test the performance of MLP against:
 # - Logistic Regression (LR)
-# - Naive Bayes (NB)
+# - Gaussian Naive Bayes (GNB)
 # - Support Vector Machine (SVM)
 # - Desicion Tree (DT)
 # - Random Forest (RF)
@@ -313,7 +318,7 @@ class MLP():
 
         return W
 
-    def train(self, hidden_layers_sizes=(5,5,), iters=100, rate=1e-3):
+    def train(self, hidden_layers_sizes=(5,5,), iters=100, rate=0.001):
 
         x = self.train_data
         y = np.transpose(np.matrix(self.train_labs))
@@ -377,7 +382,7 @@ class MLP():
                 
                 # compute the weight gradient and update weights for the current layer
                 grad_w = np.matmul(np.transpose(z_in), delta[m + 1])
-                W[m+1] = W[m+1] - rate * grad_w / self.N_examples  # goal is to minimize squared error, so subtract the gradient from the weights
+                W[m+1] = W[m+1] - rate * grad_w  # goal is to minimize squared error, so subtract the gradient from the weights
 
                 # compute delta for the next layer back
                 if m > -1:
@@ -386,6 +391,7 @@ class MLP():
                     delta[m] = np.multiply(d, (1 - np.power(Z[m][:, 1:], 2)))
 
             #print error every few steps
+            """
             if I % 10 == 0:
                 sq = np.array(np.square(y - Z[M]))
                 loss = np.mean(sq)  # Sample loss (MSE)
@@ -393,6 +399,7 @@ class MLP():
                 max = np.max(sq)
                 min = np.min(sq)
                 print(f"Iteration {I}, Loss: {loss}, Median: {med}, Max: {max}, Min: {min}")
+            """
 
         return W
 
@@ -437,9 +444,8 @@ class MLP():
 
         return (z, probs)
 
-    
-    def evaluate(self, labels, preds, probs):
 
+    def confusionMatrix(self, labels, preds):
         preds[preds == -1] = 0
         TP = np.sum(preds == labels)   # correct
         FP = np.sum(preds == -labels)  # error
@@ -462,6 +468,14 @@ class MLP():
 
         confusion_matrix = (TP, FP, TN, FN)
 
+        return confusion_matrix
+    
+
+    def evaluate(self, labels, preds, probs, using_sklearn=False):
+
+        TP, FP, TN, FN = self.confusionMatrix(labels, preds)
+        confusion_matrix = (TP, FP, TN, FN)
+
         acc = (TP + TN) / (TP + FN + FP + TN)
         #acc2 = np.mean(labels == preds)
         #print(np.abs(acc - acc2) < 1e-16)
@@ -472,18 +486,103 @@ class MLP():
 
         precision = TP / (TP + FP)
 
+        F1_score = 2 * precision * recall / (precision + recall)
+
+        MCC = (TP * TN - FP * FN) / np.sqrt((TP + FP) * (TP + FN) * (TN + FP) * (TN + FN))
+
+        roc_auc = self.roc_auc(labels, probs, using_sklearn)
+
+        return (acc, recall, FPR, precision, F1_score, MCC, confusion_matrix, roc_auc)
+
+
+    def roc_auc(self, labels, probs, using_sklearn=False):
         # for roc, need to step thresholds using probability. i.e.,
-        # threshold = -1:0.1:1
-        # for i = 0:len(threshold)
-        #   probs[probs < threshold] = -1 # if z is negative, classify as no heart disease
-        #   probs[probs > threshold] = 1 # if z is positive, classify as heart disease
-        #   calculate_confusion_matrix(probs)
-        #   TPR[i] =... , FPR[i] =...
-        #
-        # roc = plot(FPR, TPR)
+        if using_sklearn:
+            thresholds = np.linspace(0, 1, 200) #probs from 0 to 1 w/ sklearn
+        else:
+            thresholds = np.linspace(-1, 1, 100) #probs from -1 to 1 w/ my code
 
-        return (acc, recall, FPR, precision, confusion_matrix)
+        N = len(thresholds)
+        TPR = [0] * N
+        FPR = [0] * N
+        auc = 0
 
+        for i in range(N):
+            preds = probs.copy()
+            preds[probs < thresholds[i]] = -1 # if z is negative, classify as no heart disease
+            preds[probs > thresholds[i]] = 1 # if z is positive, classify as heart disease
+            preds = np.array(preds, dtype=int)
+
+            TP, FP, TN, FN = self.confusionMatrix(labels, preds)
+            TPR[i] = TP / (TP + FN) # aka recall
+            FPR[i] = FP / (FP + TN)
+
+            # trapezoidal numerical integration for AUC
+            if i > 0:
+                dFPR = FPR[i-1] - FPR[i]
+                auc += 0.5 * (TPR[i-1] + TPR[i]) * dFPR
+
+        #print(auc)
+
+        """
+        FPR_TPR = np.array([FPR, TPR])
+        FPR_TPR.sort(axis=1)
+        FPR = FPR_TPR[0,:]
+        TPR = FPR_TPR[1,:]
+
+        # trapezoidal numerical integration for AUC
+        auc = 0
+        for i in range(1,N):
+            dFPR = FPR[i] - FPR[i-1]
+            auc += 0.5 * (TPR[i] + TPR[i-1]) * dFPR
+
+        print(auc)
+        """
+
+        roc = (FPR, TPR)
+
+        return roc, auc, thresholds
+
+    def roc_auc_curve(self, roc_auc):
+        roc = roc_auc[0]
+        auc = roc_auc[1]
+        thresholds = roc_auc[2]
+
+        FPR = roc[0]
+        TPR = roc[1]
+
+        plt.plot(FPR, TPR)
+        plt.show()
+
+    def multi_roc_auc_curve(self, rocs_aucs, MLA_types):
+
+        N = len(rocs_aucs)
+
+        leg_strs = [0] * N
+        
+        for i in range(N):
+            roc_auc = rocs_aucs[i]
+
+            roc = roc_auc[0]
+            auc = roc_auc[1]
+            thresholds = roc_auc[2]
+
+            FPR = roc[0]
+            TPR = roc[1]
+
+            leg_strs[i] = f'{MLA_types[i]} AUC: {round(auc,3)}'
+
+            if i == 0:
+                plt.plot(FPR, TPR, '--', markersize=2.5)
+            else:
+                plt.plot(FPR, TPR, 'o-', markersize=2.5)
+
+        plt.legend(leg_strs)
+        plt.title('ROC-AUC')
+        plt.xlabel('FPR')
+        plt.ylabel('TPR')
+
+        plt.show()
 
 
 if __name__ == '__main__':
@@ -496,16 +595,113 @@ if __name__ == '__main__':
     #mlp.dataStats(mlp.train_data)
     #mlp.dataStats(mlp.test_data)
 
-    theta = mlp.train(iters=1000, hidden_layers_sizes=(20,20,20,20,20,), rate=1.0)
+    rocs_aucs = []
+    MLA_types = []
+
+
+    # --- no skill ---
+    ns_probs = np.array([0] * len(mlp.test_labs))
+    ns_roc_auc = mlp.roc_auc(mlp.test_labs, ns_probs, using_sklearn=False)
+    rocs_aucs.append(ns_roc_auc)
+    MLA_types.append('No Skill')
+
+    n_examples = mlp.train_data.shape[0]
+
+
+    # --- my MLP implementation ---
+    theta = mlp.train(iters=1000, hidden_layers_sizes=(20,20,20,20,20,), rate=1/n_examples)
     preds, probs = mlp.predict(theta)
 
-    #n_examples = mlp.train_data.shape[0]
-    #sk_mlp = MLPClassifier(hidden_layer_sizes=(20,20,20,20,20,), activation='tanh', solver='sgd', batch_size=n_examples, learning_rate_init=1/n_examples, max_iter=1000).fit(mlp.train_data, mlp.train_labs)
-    #probs = sk_mlp.predict_proba(mlp.test_data)
-    #preds = sk_mlp.predict(mlp.test_data)
+    acc, recall, FPR, precision, F1_score, MCC, confusion_matrix, myMLP_roc_auc = mlp.evaluate(mlp.test_labs, preds, probs, using_sklearn=False)
+    print(f'My MLP Accuracy: {acc}, Recall: {recall}, FPR: {FPR}, Precision: {precision}, F1 Score: {F1_score}, MCC: {MCC}')
+    print()    
+    #mlp.roc_auc_curve(myMLP_roc_auc)
+    rocs_aucs.append(myMLP_roc_auc)
+    MLA_types.append('My MLP')
 
 
-    acc, recall, FPR, precision, confusion_matrix = mlp.evaluate(mlp.test_labs, preds, probs)
-    print(f'Accuracy: {acc}, Recall: {recall}, FPR: {FPR}, Precision: {precision}')
+    # --- sklearn MLP ---
+    sk_mlp = MLPClassifier(hidden_layer_sizes=(20,20,20,20,20,), activation='tanh', solver='sgd', batch_size=n_examples, learning_rate_init=1/n_examples, max_iter=1000).fit(mlp.train_data, mlp.train_labs)
+    probs = sk_mlp.predict_proba(mlp.test_data)
+    probs = probs[:,1] # 0 class = no CVD. 1 class = CVD
+    preds = sk_mlp.predict(mlp.test_data)
 
-    
+    acc, recall, FPR, precision, F1_score, MCC, confusion_matrix, skMLP_roc_auc = mlp.evaluate(mlp.test_labs, preds, probs, using_sklearn=True)
+    print(f'skLearn MLP skLearn Accuracy: {acc}, Recall: {recall}, FPR: {FPR}, Precision: {precision}, F1 Score: {F1_score}, MCC: {MCC}')
+    print()    
+    #mlp.roc_auc_curve(skMLP_roc_auc)
+    rocs_aucs.append(skMLP_roc_auc)
+    MLA_types.append('sklearn MLP')
+
+
+    # --- Logistic Regression ---
+    sk_LR = LogisticRegression(solver='liblinear', max_iter=1000).fit(mlp.train_data, mlp.train_labs)
+    probs = sk_LR.predict_proba(mlp.test_data)
+    probs = probs[:,1] # 0 class = no CVD. 1 class = CVD
+    preds = sk_LR.predict(mlp.test_data)
+
+    acc, recall, FPR, precision, F1_score, MCC, confusion_matrix, skLR_roc_auc = mlp.evaluate(mlp.test_labs, preds, probs, using_sklearn=True)
+    print(f'skLearn LR Accuracy: {acc}, Recall: {recall}, FPR: {FPR}, Precision: {precision}, F1 Score: {F1_score}, MCC: {MCC}')
+    print()
+    #mlp.roc_auc_curve(skMLP_roc_auc)
+    rocs_aucs.append(skLR_roc_auc)
+    MLA_types.append('sklearn LR')
+
+
+    # --- Gaussian Naive Bayes ---
+    sk_GNB = GaussianNB().fit(mlp.train_data, mlp.train_labs)
+    probs = sk_GNB.predict_proba(mlp.test_data)
+    probs = probs[:,1] # 0 class = no CVD. 1 class = CVD
+    preds = sk_GNB.predict(mlp.test_data)
+
+    acc, recall, FPR, precision, F1_score, MCC, confusion_matrix, skGNB_roc_auc = mlp.evaluate(mlp.test_labs, preds, probs, using_sklearn=True)
+    print(f'skLearn GNB Accuracy: {acc}, Recall: {recall}, FPR: {FPR}, Precision: {precision}, F1 Score: {F1_score}, MCC: {MCC}')
+    print()
+    #mlp.roc_auc_curve(skMLP_roc_auc)
+    rocs_aucs.append(skGNB_roc_auc)
+    MLA_types.append('sklearn GNB')
+
+
+    # --- Support Vector Machine ---
+    sk_SVM = SVC(probability=True, max_iter=1000).fit(mlp.train_data, mlp.train_labs)
+    probs = sk_SVM.predict_proba(mlp.test_data)
+    probs = probs[:,1] # 0 class = no CVD. 1 class = CVD
+    preds = sk_SVM.predict(mlp.test_data)
+
+    acc, recall, FPR, precision, F1_score, MCC, confusion_matrix, skSVM_roc_auc = mlp.evaluate(mlp.test_labs, preds, probs, using_sklearn=True)
+    print(f'skLearn SVM Accuracy: {acc}, Recall: {recall}, FPR: {FPR}, Precision: {precision}, F1 Score: {F1_score}, MCC: {MCC}')
+    print()    
+    #mlp.roc_auc_curve(skMLP_roc_auc)
+    rocs_aucs.append(skSVM_roc_auc)
+    MLA_types.append('sklearn SVM')
+
+
+    # --- Decision Tree ---
+    sk_DT = DecisionTreeClassifier().fit(mlp.train_data, mlp.train_labs)
+    probs = sk_DT.predict_proba(mlp.test_data)
+    probs = probs[:,1] # 0 class = no CVD. 1 class = CVD
+    preds = sk_DT.predict(mlp.test_data)
+
+    acc, recall, FPR, precision, F1_score, MCC, confusion_matrix, skDT_roc_auc = mlp.evaluate(mlp.test_labs, preds, probs, using_sklearn=True)
+    print(f'skLearn DT Accuracy: {acc}, Recall: {recall}, FPR: {FPR}, Precision: {precision}, F1 Score: {F1_score}, MCC: {MCC}')
+    print()    
+    #mlp.roc_auc_curve(skMLP_roc_auc)
+    rocs_aucs.append(skDT_roc_auc)
+    MLA_types.append('sklearn DT')
+
+
+    # --- Random Forest ---
+    sk_RF = RandomForestClassifier().fit(mlp.train_data, mlp.train_labs)
+    probs = sk_RF.predict_proba(mlp.test_data)
+    probs = probs[:,1] # 0 class = no CVD. 1 class = CVD
+    preds = sk_RF.predict(mlp.test_data)
+
+    acc, recall, FPR, precision, F1_score, MCC, confusion_matrix, skRF_roc_auc = mlp.evaluate(mlp.test_labs, preds, probs, using_sklearn=True)
+    print(f'skLearn RF Accuracy: {acc}, Recall: {recall}, FPR: {FPR}, Precision: {precision}, F1 Score: {F1_score}, MCC: {MCC}')
+    print()    
+    #mlp.roc_auc_curve(skMLP_roc_auc)
+    rocs_aucs.append(skRF_roc_auc)
+    MLA_types.append('sklearn RF')
+
+
+    mlp.multi_roc_auc_curve(rocs_aucs, MLA_types)
