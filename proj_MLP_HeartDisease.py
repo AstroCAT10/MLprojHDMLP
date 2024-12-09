@@ -11,6 +11,7 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import roc_curve
 
 #outlier removal --
 from sklearn.ensemble import IsolationForest
@@ -551,7 +552,10 @@ class MLP():
         FPR = roc[0]
         TPR = roc[1]
 
-        plt.plot(FPR, TPR)
+        plt.plot(FPR, TPR, 'o-', markersize=2.5)
+        plt.title(f'ROC-AUC\nMy MLP AUC: {round(auc,3)}')
+        plt.xlabel('FPR')
+        plt.ylabel('TPR')
         plt.show()
 
     def multi_roc_auc_curve(self, rocs_aucs, MLA_types):
@@ -609,19 +613,19 @@ if __name__ == '__main__':
 
 
     # --- my MLP implementation ---
-    theta = mlp.train(iters=1000, hidden_layers_sizes=(20,20,20,20,20,), rate=1/n_examples)
+    theta = mlp.train(iters=2000, hidden_layers_sizes=(10,10,10,), rate=1/n_examples)
     preds, probs = mlp.predict(theta)
 
     acc, recall, FPR, precision, F1_score, MCC, confusion_matrix, myMLP_roc_auc = mlp.evaluate(mlp.test_labs, preds, probs, using_sklearn=False)
     print(f'My MLP Accuracy: {acc}, Recall: {recall}, FPR: {FPR}, Precision: {precision}, F1 Score: {F1_score}, MCC: {MCC}')
     print()    
-    #mlp.roc_auc_curve(myMLP_roc_auc)
+    mlp.roc_auc_curve(myMLP_roc_auc)
     rocs_aucs.append(myMLP_roc_auc)
     MLA_types.append('My MLP')
 
 
     # --- sklearn MLP ---
-    sk_mlp = MLPClassifier(hidden_layer_sizes=(20,20,20,20,20,), activation='tanh', solver='sgd', batch_size=n_examples, learning_rate_init=1/n_examples, max_iter=1000).fit(mlp.train_data, mlp.train_labs)
+    sk_mlp = MLPClassifier(hidden_layer_sizes=(10,10,10,), activation='tanh', solver='adam', batch_size=n_examples, learning_rate_init=1/n_examples, max_iter=2000).fit(mlp.train_data, mlp.train_labs)
     probs = sk_mlp.predict_proba(mlp.test_data)
     probs = probs[:,1] # 0 class = no CVD. 1 class = CVD
     preds = sk_mlp.predict(mlp.test_data)
@@ -635,7 +639,7 @@ if __name__ == '__main__':
 
 
     # --- Logistic Regression ---
-    sk_LR = LogisticRegression(solver='liblinear', max_iter=1000).fit(mlp.train_data, mlp.train_labs)
+    sk_LR = LogisticRegression(solver='liblinear', max_iter=2000).fit(mlp.train_data, mlp.train_labs)
     probs = sk_LR.predict_proba(mlp.test_data)
     probs = probs[:,1] # 0 class = no CVD. 1 class = CVD
     preds = sk_LR.predict(mlp.test_data)
@@ -663,7 +667,7 @@ if __name__ == '__main__':
 
 
     # --- Support Vector Machine ---
-    sk_SVM = SVC(probability=True, max_iter=1000).fit(mlp.train_data, mlp.train_labs)
+    sk_SVM = SVC(probability=True, max_iter=2000).fit(mlp.train_data, mlp.train_labs)
     probs = sk_SVM.predict_proba(mlp.test_data)
     probs = probs[:,1] # 0 class = no CVD. 1 class = CVD
     preds = sk_SVM.predict(mlp.test_data)
@@ -685,7 +689,7 @@ if __name__ == '__main__':
     acc, recall, FPR, precision, F1_score, MCC, confusion_matrix, skDT_roc_auc = mlp.evaluate(mlp.test_labs, preds, probs, using_sklearn=True)
     print(f'skLearn DT Accuracy: {acc}, Recall: {recall}, FPR: {FPR}, Precision: {precision}, F1 Score: {F1_score}, MCC: {MCC}')
     print()    
-    #mlp.roc_auc_curve(skMLP_roc_auc)
+    #mlp.roc_auc_curve(skDT_roc_auc)
     rocs_aucs.append(skDT_roc_auc)
     MLA_types.append('sklearn DT')
 
